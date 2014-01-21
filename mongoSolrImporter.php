@@ -114,7 +114,7 @@ class solrMongoBridge
      * 
      * @author thr  - 07.01.2014
      */
-    public static function convertDocs($mongoCursor, $fields)
+    public static function convertDocs($mongoCursor, $fields, $mvchr)
     {
         $solrDocs = array();
         foreach ($mongoCursor as $mongoDoc) 
@@ -124,7 +124,7 @@ class solrMongoBridge
             foreach ($fields as $mongoField=>$solrField)
             {
              //do some convertion on special fieldtypes, like MongoID oer MongoDate
-             $solrPreparedField = self::prepareField($mongoDoc[$mongoField]); 
+             $solrPreparedField = self::prepareField($mongoDoc[$mongoField], $mvchr); 
              $doc->addField($solrField,$solrPreparedField);
             }
             //add current doc to an array of solr docs
@@ -137,33 +137,44 @@ class solrMongoBridge
     /**
      * handles mongo-specific field types (like MongoID or MongoDate)
      * to convert those objects to solr-like syntax
+     * and converts arrays to multiValuedFields with seperator
      * 
+     * @param type $mvfchr
      * @param type $field
      * @return type
      * 
      * @author thr  - 07.01.2014
      */
-    private static function prepareField($field)
+    private static function prepareField($field, $mvchr)
     {
         if (is_object($field))
+        {
+            $fieldType=get_class($field);
+            switch ($fieldType)
             {
-                $fieldType=get_class($field);
-                switch ($fieldType)
-                {
-                    case "MongoId":
-                        //return MongoID as string
-                        $field=(string) $field;
-                        break;
-                    case "MongoDate":
-                        //return MongoDate als SOLR compatible DATE/TIME string
-                        //including micro seconds
-                        $field=date('Y-m-d\TH:i:s', $field->sec).
-                                    '.'.$field->usec.'Z';
-                        break;
-                }
+                case "MongoId":
+                    //return MongoID as string
+                    $field=(string) $field;
+                    break;
+                case "MongoDate":
+                    //return MongoDate als SOLR compatible DATE/TIME string
+                    //including micro seconds
+                    $field=date('Y-m-d\TH:i:s', $field->sec).
+                                '.'.$field->usec.'Z';
+                    break;
             }
+        }
         
-        return $field;
+        elseif (is_array($field))
+        {
+            foreach ($field as $element)
+            {//$mvchr beachten!!
+                $returnArray [] = self::prepareField($element, $mvchr);
+            }
+            $field = implode ($mvchr, $returnArray);
+        }
+        
+        return (string)$field;
     }
     
     
@@ -262,7 +273,7 @@ function run_singelthread($init)
         //set counter for next block
         $skip = $skip+$init["mongo"]["STEPSIZE"];
         //convert loaded mongoDB docs to solr
-        $solrDocs = solrMongoBridge::convertDocs($mongoCursor,$init["fields"]);
+        $solrDocs = solrMongoBridge::convertDocs($mongoCursor,$init["fields"], $init["solr"]["MVCHR"]);
         $solrClient = $sS->connectSolrCore($init["solr"]["HOST"],$init["solr"]["PORT"],$init["solr"]["PATH"]);
         //push blocks of documents to solr
         $solrClient->addDocuments($solrDocs,0,1);
@@ -293,7 +304,7 @@ function run_parallel($skip, $init)
     //load block of docs from solr
     $mongoCursor = $mS->fetch($mongoCollection,$init["mongo"]["QUERY"],$skip,$init["mongo"]["STEPSIZE"]);
     //convert loaded mongoDB docs to solr
-    $solrDocs = solrMongoBridge::convertDocs($mongoCursor,$init["fields"]);
+    $solrDocs = solrMongoBridge::convertDocs($mongoCursor,$init["fields"], $init["solr"]["MVCHR"]);
     $solrClient = $sS->connectSolrCore($init["solr"]["HOST"],$init["solr"]["PORT"],$init["solr"]["PATH"]);
     //push blocks of documents to solr
     $solrClient->addDocuments($solrDocs,0,1);
@@ -341,7 +352,7 @@ function start_forks($init)
 
 
 function main()
-{
+{ 
 $cmdOption = getopt("c:s:");
 $init = parse_config_file($cmdOption["c"]);
 
